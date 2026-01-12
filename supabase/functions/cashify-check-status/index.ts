@@ -79,7 +79,6 @@ serve(async (req) => {
         await saveLicenseToGitHub(GITHUB_TOKEN, licenseKey, {
           package: txData.package_name,
           expired: expiryDate.toISOString(),
-          created_at: new Date().toISOString(),
         });
       }
 
@@ -133,7 +132,7 @@ serve(async (req) => {
   }
 });
 
-async function saveLicenseToGitHub(token: string, licenseKey: string, data: { package: string; expired: string; created_at: string }) {
+async function saveLicenseToGitHub(token: string, licenseKey: string, data: { package: string; expired: string }) {
   const owner = 'AREXANS';
   const repo = 'cupapi';
   const path = 'keksoeldlkdkd.json';
@@ -161,12 +160,11 @@ async function saveLicenseToGitHub(token: string, licenseKey: string, data: { pa
       }
     }
 
-    // Add new license in exact format
+    // Add new license with role instead of package
     existingLicenses.push({
       key: licenseKey,
-      package: data.package,
       expired: data.expired,
-      created_at: data.created_at,
+      role: data.package,
     });
 
     // Update file
