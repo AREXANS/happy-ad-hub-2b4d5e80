@@ -5,13 +5,37 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/hooks/use-toast';
-import { Trash2, Plus, ArrowUp, ArrowDown, LogOut, Image, Video, Search, RefreshCw, X, Eye, DollarSign, Clock, CheckCircle, Palette, Copy, Pencil, Package, Volume2, VolumeX } from 'lucide-react';
+import { Trash2, Plus, ArrowUp, ArrowDown, LogOut, Image, Video, Search, RefreshCw, X, Eye, DollarSign, Clock, CheckCircle, Palette, Copy, Pencil, Package, Volume2, VolumeX, AlertTriangle, Smartphone } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useBackground } from '@/contexts/BackgroundContext';
 
-const ADMIN_KEY = 'arexanstools';
+const STORAGE_KEY = 'arexans_admin_session';
+const DEVICE_ID_KEY = 'arexans_device_id';
+
+// Generate or get device ID
+const getDeviceId = (): string => {
+  let deviceId = localStorage.getItem(DEVICE_ID_KEY);
+  if (!deviceId) {
+    deviceId = 'device_' + crypto.randomUUID();
+    localStorage.setItem(DEVICE_ID_KEY, deviceId);
+  }
+  return deviceId;
+};
+
+// Get device info for detection
+const getDeviceInfo = () => {
+  return {
+    userAgent: navigator.userAgent,
+    platform: navigator.platform,
+    language: navigator.language,
+    screenWidth: window.screen.width,
+    screenHeight: window.screen.height,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    timestamp: new Date().toISOString()
+  };
+};
 
 interface Ad {
   id: string;
@@ -72,6 +96,8 @@ const Admin = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [loading, setLoading] = useState(false);
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [newDeviceWarning, setNewDeviceWarning] = useState<string | null>(null);
 
   // Edit dialogs
   const [editAdDialog, setEditAdDialog] = useState(false);
@@ -96,12 +122,30 @@ const Admin = () => {
     link: ''
   });
 
+  // Check for existing session on mount
   useEffect(() => {
-    const savedAuth = sessionStorage.getItem('admin_auth');
-    if (savedAuth === 'true') {
-      setIsAuthenticated(true);
-      loadData();
-    }
+    const checkExistingSession = async () => {
+      const savedSession = localStorage.getItem(STORAGE_KEY);
+      if (savedSession) {
+        try {
+          const session = JSON.parse(savedSession);
+          const currentDeviceId = getDeviceId();
+          
+          // Check if this is a different device
+          if (session.deviceId && session.deviceId !== currentDeviceId) {
+            setNewDeviceWarning(`Perangkat baru terdeteksi! Device ID: ${currentDeviceId.substring(0, 20)}...`);
+          }
+          
+          // Session exists, auto-login
+          setIsAuthenticated(true);
+          loadData();
+        } catch (e) {
+          console.error('Session parse error:', e);
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      }
+    };
+    checkExistingSession();
   }, []);
 
   const loadData = async () => {
@@ -131,22 +175,56 @@ const Admin = () => {
     }
   };
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (adminKey === ADMIN_KEY) {
-      setIsAuthenticated(true);
-      sessionStorage.setItem('admin_auth', 'true');
-      loadData();
-      toast({ title: "Login berhasil", description: "Selamat datang, Admin!" });
-    } else {
-      toast({ title: "Error", description: "Kunci admin salah!", variant: "destructive" });
+    setLoginLoading(true);
+
+    try {
+      const deviceId = getDeviceId();
+      const deviceInfo = getDeviceInfo();
+      
+      const response = await supabase.functions.invoke('admin-auth', {
+        body: {
+          action: 'login',
+          password: adminKey,
+          deviceId,
+          deviceInfo
+        }
+      });
+
+      if (response.error) {
+        throw new Error(response.error.message);
+      }
+
+      if (response.data?.success) {
+        // Save session to localStorage (persistent)
+        const session = {
+          token: response.data.sessionToken,
+          deviceId,
+          loginTime: new Date().toISOString()
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+        
+        setIsAuthenticated(true);
+        loadData();
+        toast({ title: "Login berhasil", description: "Selamat datang, Admin!" });
+      } else {
+        toast({ title: "Error", description: response.data?.error || "Kunci admin salah!", variant: "destructive" });
+      }
+    } catch (error) {
+      console.error('Login error:', error);
+      toast({ title: "Error", description: "Gagal login. Coba lagi.", variant: "destructive" });
+    } finally {
+      setLoginLoading(false);
     }
   };
 
   const handleLogout = () => {
     setIsAuthenticated(false);
-    sessionStorage.removeItem('admin_auth');
+    localStorage.removeItem(STORAGE_KEY);
     setAdminKey('');
+    setNewDeviceWarning(null);
+    toast({ title: "Logout berhasil", description: "Anda telah keluar dari dashboard admin" });
   };
 
   const copyToClipboard = (text: string) => {
@@ -443,8 +521,12 @@ const Admin = () => {
                 className="mt-1 bg-muted/50 border-border"
               />
             </div>
-            <Button type="submit" className="w-full btn-primary text-primary-foreground font-display font-bold">
-              Masuk
+            <Button 
+              type="submit" 
+              disabled={loginLoading}
+              className="w-full btn-primary text-primary-foreground font-display font-bold"
+            >
+              {loginLoading ? 'Memverifikasi...' : 'Masuk'}
             </Button>
           </form>
         </div>
@@ -467,6 +549,26 @@ const Admin = () => {
             <LogOut className="w-4 h-4 mr-2" /> Keluar
           </Button>
         </div>
+
+        {/* New Device Warning */}
+        {newDeviceWarning && (
+          <div className="mb-6 p-4 bg-warning/10 border border-warning/30 rounded-lg flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-warning font-medium text-sm">Perangkat Baru Terdeteksi!</p>
+              <p className="text-muted-foreground text-xs mt-1">{newDeviceWarning}</p>
+              <p className="text-muted-foreground text-xs mt-1">Jika ini bukan Anda, segera logout dan ganti password.</p>
+            </div>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={() => setNewDeviceWarning(null)}
+              className="ml-auto"
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+        )}
 
         {/* Stats Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-6 md:mb-8">
