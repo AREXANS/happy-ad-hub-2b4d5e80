@@ -112,7 +112,10 @@ const PaymentSuccess: FC<PaymentSuccessProps> = ({ finalData, onCopy }) => {
         </div>
 
         <Button
-          onClick={() => window.location.reload()}
+          onClick={() => {
+            localStorage.removeItem('arexans_payment_state');
+            window.location.reload();
+          }}
           variant="outline"
           className="w-full font-display"
         >

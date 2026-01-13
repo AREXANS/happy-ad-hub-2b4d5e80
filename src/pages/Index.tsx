@@ -42,6 +42,17 @@ interface FinalData {
   days: number;
 }
 
+const STORAGE_KEY = 'arexans_payment_state';
+
+interface StoredState {
+  step: number;
+  selectedPkg: 'NORMAL' | 'VIP' | null;
+  formData: { key: string; duration: string };
+  paymentData: PaymentData | null;
+  finalData: FinalData | null;
+  daysToAdd: number;
+}
+
 const Index = () => {
   const [step, setStep] = useState(1);
   const [selectedPkg, setSelectedPkg] = useState<'NORMAL' | 'VIP' | null>(null);
@@ -53,6 +64,7 @@ const Index = () => {
   const [errorMsg, setErrorMsg] = useState('');
   const [ads, setAds] = useState<Ad[]>([]);
   const [packages, setPackages] = useState<Package[]>([]);
+  const [daysToAdd, setDaysToAdd] = useState(0);
 
   const checkInterval = useRef<number | null>(null);
 
@@ -61,6 +73,61 @@ const Index = () => {
     NORMAL: packages.find(p => p.name === 'NORMAL')?.price_per_day ?? 2000,
     VIP: packages.find(p => p.name === 'VIP')?.price_per_day ?? 3000
   };
+
+  // Save state to localStorage
+  const saveState = (newStep: number, newPaymentData?: PaymentData | null, newFinalData?: FinalData | null, newDays?: number) => {
+    const state: StoredState = {
+      step: newStep,
+      selectedPkg,
+      formData,
+      paymentData: newPaymentData !== undefined ? newPaymentData : paymentData,
+      finalData: newFinalData !== undefined ? newFinalData : finalData,
+      daysToAdd: newDays !== undefined ? newDays : daysToAdd
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  };
+
+  // Clear stored state
+  const clearStoredState = () => {
+    localStorage.removeItem(STORAGE_KEY);
+  };
+
+  // Restore state on mount
+  useEffect(() => {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      try {
+        const state: StoredState = JSON.parse(stored);
+        
+        // Check if payment data expired
+        if (state.paymentData?.expiresAt) {
+          const expiresAt = new Date(state.paymentData.expiresAt);
+          if (expiresAt < new Date()) {
+            clearStoredState();
+            return;
+          }
+        }
+
+        // Restore state
+        if (state.step === 3 && state.paymentData) {
+          setStep(3);
+          setSelectedPkg(state.selectedPkg);
+          setFormData(state.formData);
+          setPaymentData(state.paymentData);
+          setDaysToAdd(state.daysToAdd);
+          // Resume payment check
+          startPaymentCheck(state.paymentData.transactionId, state.daysToAdd);
+        } else if (state.step === 4 && state.finalData) {
+          setStep(4);
+          setSelectedPkg(state.selectedPkg);
+          setFormData(state.formData);
+          setFinalData(state.finalData);
+        }
+      } catch {
+        clearStoredState();
+      }
+    }
+  }, []);
 
   useEffect(() => {
     // Load ads from database
@@ -180,15 +247,21 @@ const Index = () => {
 
       const qrUrl = `https://larabert-qrgen.hf.space/v1/create-qr-code?size=500x500&style=2&color=0D8BA5&data=${encodeURIComponent(data.data.qr_string)}`;
 
-      setPaymentData({
+      const newPaymentData = {
         transactionId: data.data.transactionId,
         qr_string: data.data.qr_string,
         qris_url: qrUrl,
         totalAmount: data.data.totalAmount,
         expiresAt: data.data.expiresAt
-      });
+      };
 
+      setPaymentData(newPaymentData);
+      setDaysToAdd(durationData.days);
       setStep(3);
+      
+      // Save state to localStorage
+      saveState(3, newPaymentData, null, durationData.days);
+      
       startPaymentCheck(data.data.transactionId, durationData.days);
       
     } catch (error: unknown) {
@@ -205,7 +278,7 @@ const Index = () => {
     }
   };
 
-  const startPaymentCheck = (trxId: string, daysToAdd: number) => {
+  const startPaymentCheck = (trxId: string, days: number) => {
     setStatusMsg("Menunggu pembayaran...");
 
     // Check payment status every 5 seconds
@@ -225,9 +298,9 @@ const Index = () => {
           setStatusMsg("Pembayaran Diterima! Memproses akun...");
 
           const expiredDate = new Date();
-          expiredDate.setDate(expiredDate.getDate() + daysToAdd);
+          expiredDate.setDate(expiredDate.getDate() + days);
 
-          setFinalData({
+          const newFinalData = {
             key: data.licenseKey || formData.key,
             package: selectedPkg || 'NORMAL',
             expired: expiredDate.toISOString(),
@@ -236,12 +309,18 @@ const Index = () => {
               month: 'long', 
               year: 'numeric' 
             }),
-            days: daysToAdd
-          });
+            days: days
+          };
+          
+          setFinalData(newFinalData);
           setStep(4);
+          
+          // Save success state to localStorage
+          saveState(4, null, newFinalData, days);
         } else if (data.status === 'expired' || data.status === 'cancelled') {
           if (checkInterval.current) clearInterval(checkInterval.current);
           setErrorMsg(`Transaksi ${data.status === 'expired' ? 'kedaluwarsa' : 'dibatalkan'}`);
+          clearStoredState();
         }
       } catch (err) {
         console.error('Status check failed:', err);
@@ -265,6 +344,9 @@ const Index = () => {
       }
     }
 
+    // Clear stored state
+    clearStoredState();
+    
     setPaymentData(null);
     setStep(1);
     setStatusMsg('');
