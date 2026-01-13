@@ -70,7 +70,7 @@ const OrderForm: FC<OrderFormProps> = ({
         <form onSubmit={onSubmit} className="space-y-6">
           <div>
             <label className="block text-sm font-medium mb-2 text-foreground">
-              Key / Nickname
+              Kunci Rahasia
             </label>
             <div className="flex gap-2">
               <Input
