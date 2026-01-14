@@ -14,6 +14,36 @@ export type Database = {
   }
   public: {
     Tables: {
+      admin_login_history: {
+        Row: {
+          device_id: string
+          device_info: Json | null
+          device_name: string | null
+          id: string
+          ip_address: string | null
+          is_current: boolean
+          login_time: string
+        }
+        Insert: {
+          device_id: string
+          device_info?: Json | null
+          device_name?: string | null
+          id?: string
+          ip_address?: string | null
+          is_current?: boolean
+          login_time?: string
+        }
+        Update: {
+          device_id?: string
+          device_info?: Json | null
+          device_name?: string | null
+          id?: string
+          ip_address?: string | null
+          is_current?: boolean
+          login_time?: string
+        }
+        Relationships: []
+      }
       ads: {
         Row: {
           created_at: string
@@ -119,6 +149,42 @@ export type Database = {
           price_per_day?: number
           sort_order?: number
           updated_at?: string
+        }
+        Relationships: []
+      }
+      social_links: {
+        Row: {
+          created_at: string
+          icon_type: string
+          id: string
+          is_active: boolean
+          label: string
+          name: string
+          sort_order: number
+          updated_at: string
+          url: string
+        }
+        Insert: {
+          created_at?: string
+          icon_type?: string
+          id?: string
+          is_active?: boolean
+          label: string
+          name: string
+          sort_order?: number
+          updated_at?: string
+          url: string
+        }
+        Update: {
+          created_at?: string
+          icon_type?: string
+          id?: string
+          is_active?: boolean
+          label?: string
+          name?: string
+          sort_order?: number
+          updated_at?: string
+          url?: string
         }
         Relationships: []
       }
