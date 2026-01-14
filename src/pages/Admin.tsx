@@ -5,7 +5,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/hooks/use-toast';
-import { Trash2, Plus, ArrowUp, ArrowDown, LogOut, Image, Video, Search, RefreshCw, X, Eye, DollarSign, Clock, CheckCircle, Palette, Copy, Pencil, Package, Volume2, VolumeX, AlertTriangle, Smartphone } from 'lucide-react';
+import { Trash2, Plus, ArrowUp, ArrowDown, LogOut, Image, Video, Search, RefreshCw, X, Eye, DollarSign, Clock, CheckCircle, Palette, Copy, Pencil, Package, Volume2, VolumeX, AlertTriangle, Smartphone, Link, History, Check } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
@@ -85,6 +85,25 @@ interface PackageData {
   sort_order: number;
 }
 
+interface SocialLink {
+  id: string;
+  name: string;
+  icon_type: string;
+  url: string;
+  label: string;
+  is_active: boolean;
+  sort_order: number;
+}
+
+interface LoginHistory {
+  id: string;
+  device_id: string;
+  device_name: string | null;
+  device_info: Record<string, unknown> | null;
+  login_time: string;
+  is_current: boolean;
+}
+
 const Admin = () => {
   const { refetch: refetchBackground } = useBackground();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -93,19 +112,24 @@ const Admin = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [backgrounds, setBackgrounds] = useState<Background[]>([]);
   const [packages, setPackages] = useState<PackageData[]>([]);
+  const [socialLinks, setSocialLinks] = useState<SocialLink[]>([]);
+  const [loginHistory, setLoginHistory] = useState<LoginHistory[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [loading, setLoading] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [newDeviceWarning, setNewDeviceWarning] = useState<string | null>(null);
+  const [currentDeviceId, setCurrentDeviceId] = useState<string>('');
 
   // Edit dialogs
   const [editAdDialog, setEditAdDialog] = useState(false);
   const [editBgDialog, setEditBgDialog] = useState(false);
   const [editPkgDialog, setEditPkgDialog] = useState(false);
+  const [editLinkDialog, setEditLinkDialog] = useState(false);
   const [editingAd, setEditingAd] = useState<Ad | null>(null);
   const [editingBg, setEditingBg] = useState<Background | null>(null);
   const [editingPkg, setEditingPkg] = useState<PackageData | null>(null);
+  const [editingLink, setEditingLink] = useState<SocialLink | null>(null);
 
   // Background form
   const [bgForm, setBgForm] = useState({
@@ -122,18 +146,28 @@ const Admin = () => {
     link: ''
   });
 
+  // New social link form
+  const [newLink, setNewLink] = useState({
+    name: '',
+    icon_type: 'whatsapp',
+    url: '',
+    label: ''
+  });
+
   // Check for existing session on mount
   useEffect(() => {
     const checkExistingSession = async () => {
       const savedSession = localStorage.getItem(STORAGE_KEY);
+      const deviceId = getDeviceId();
+      setCurrentDeviceId(deviceId);
+      
       if (savedSession) {
         try {
           const session = JSON.parse(savedSession);
-          const currentDeviceId = getDeviceId();
           
           // Check if this is a different device
-          if (session.deviceId && session.deviceId !== currentDeviceId) {
-            setNewDeviceWarning(`Perangkat baru terdeteksi! Device ID: ${currentDeviceId.substring(0, 20)}...`);
+          if (session.deviceId && session.deviceId !== deviceId) {
+            setNewDeviceWarning(`Perangkat baru terdeteksi! Device ID: ${deviceId.substring(0, 20)}...`);
           }
           
           // Session exists, auto-login
@@ -151,22 +185,33 @@ const Admin = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [adsRes, txRes, bgRes, pkgRes] = await Promise.all([
+      const [adsRes, txRes, bgRes, pkgRes, linksRes] = await Promise.all([
         supabase.from('ads').select('*').order('sort_order'),
         supabase.from('transactions').select('*').order('created_at', { ascending: false }),
         supabase.from('backgrounds').select('*').order('sort_order'),
-        supabase.from('packages').select('*').order('sort_order')
+        supabase.from('packages').select('*').order('sort_order'),
+        supabase.from('social_links').select('*').order('sort_order')
       ]);
 
       if (adsRes.error) throw adsRes.error;
       if (txRes.error) throw txRes.error;
       if (bgRes.error) throw bgRes.error;
       if (pkgRes.error) throw pkgRes.error;
+      if (linksRes.error) throw linksRes.error;
 
       setAds(adsRes.data || []);
       setTransactions(txRes.data || []);
       setBackgrounds((bgRes.data || []) as Background[]);
       setPackages((pkgRes.data || []) as PackageData[]);
+      setSocialLinks((linksRes.data || []) as SocialLink[]);
+
+      // Load login history
+      const historyResponse = await supabase.functions.invoke('admin-auth', {
+        body: { action: 'get_login_history' }
+      });
+      if (historyResponse.data?.loginHistory) {
+        setLoginHistory(historyResponse.data.loginHistory);
+      }
     } catch (error) {
       console.error('Load error:', error);
       toast({ title: "Error", description: "Gagal memuat data", variant: "destructive" });
@@ -206,8 +251,11 @@ const Admin = () => {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
         
         setIsAuthenticated(true);
+        if (response.data.loginHistory) {
+          setLoginHistory(response.data.loginHistory);
+        }
         loadData();
-        toast({ title: "Login berhasil", description: "Selamat datang, Admin!" });
+        toast({ title: "Login berhasil", description: `Selamat datang, Admin! (${response.data.deviceName || 'Unknown Device'})` });
       } else {
         toast({ title: "Error", description: response.data?.error || "Kunci admin salah!", variant: "destructive" });
       }
@@ -452,6 +500,95 @@ const Admin = () => {
     }
   };
 
+  // Social Link handlers
+  const handleAddSocialLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newLink.name || !newLink.url || !newLink.label) {
+      toast({ title: "Error", description: "Semua field wajib diisi", variant: "destructive" });
+      return;
+    }
+
+    try {
+      const { error } = await supabase.from('social_links').insert({
+        name: newLink.name,
+        icon_type: newLink.icon_type,
+        url: newLink.url,
+        label: newLink.label,
+        is_active: true,
+        sort_order: socialLinks.length
+      });
+
+      if (error) throw error;
+      toast({ title: "Berhasil", description: "Link berhasil ditambahkan" });
+      setNewLink({ name: '', icon_type: 'whatsapp', url: '', label: '' });
+      loadData();
+    } catch (error) {
+      console.error('Add link error:', error);
+      toast({ title: "Error", description: "Gagal menambah link", variant: "destructive" });
+    }
+  };
+
+  const handleUpdateSocialLink = async () => {
+    if (!editingLink) return;
+    try {
+      const { error } = await supabase.from('social_links').update({
+        name: editingLink.name,
+        icon_type: editingLink.icon_type,
+        url: editingLink.url,
+        label: editingLink.label
+      }).eq('id', editingLink.id);
+
+      if (error) throw error;
+      toast({ title: "Berhasil", description: "Link berhasil diupdate" });
+      setEditLinkDialog(false);
+      setEditingLink(null);
+      loadData();
+    } catch (error) {
+      console.error('Update link error:', error);
+      toast({ title: "Error", description: "Gagal update link", variant: "destructive" });
+    }
+  };
+
+  const handleToggleSocialLink = async (id: string, isActive: boolean) => {
+    try {
+      const { error } = await supabase.from('social_links').update({ is_active: !isActive }).eq('id', id);
+      if (error) throw error;
+      loadData();
+    } catch (error) {
+      console.error('Toggle link error:', error);
+    }
+  };
+
+  const handleDeleteSocialLink = async (id: string) => {
+    if (!confirm('Hapus link ini?')) return;
+    try {
+      const { error } = await supabase.from('social_links').delete().eq('id', id);
+      if (error) throw error;
+      toast({ title: "Berhasil", description: "Link berhasil dihapus" });
+      loadData();
+    } catch (error) {
+      console.error('Delete link error:', error);
+    }
+  };
+
+  const handleMoveSocialLink = async (id: string, direction: 'up' | 'down') => {
+    const index = socialLinks.findIndex(l => l.id === id);
+    if ((direction === 'up' && index === 0) || (direction === 'down' && index === socialLinks.length - 1)) return;
+
+    const newIndex = direction === 'up' ? index - 1 : index + 1;
+    const newLinks = [...socialLinks];
+    [newLinks[index], newLinks[newIndex]] = [newLinks[newIndex], newLinks[index]];
+
+    try {
+      for (let i = 0; i < newLinks.length; i++) {
+        await supabase.from('social_links').update({ sort_order: i }).eq('id', newLinks[i].id);
+      }
+      loadData();
+    } catch (error) {
+      console.error('Move link error:', error);
+    }
+  };
+
   // Transaction handlers
   const handleClearTransactions = async (status: string) => {
     if (!confirm(`Hapus semua transaksi dengan status "${status}"?`)) return;
@@ -477,6 +614,33 @@ const Admin = () => {
     }
   };
 
+  const handleUpdateTransactionStatus = async (transactionId: string, newStatus: string) => {
+    if (!confirm(`Ubah status transaksi menjadi "${newStatus}"?`)) return;
+    try {
+      const response = await supabase.functions.invoke('admin-auth', {
+        body: {
+          action: 'update_transaction_status',
+          transactionId,
+          newStatus
+        }
+      });
+
+      if (response.error) throw response.error;
+      if (!response.data?.success) throw new Error(response.data?.error || 'Failed');
+
+      toast({ 
+        title: "Berhasil", 
+        description: response.data.licenseKey 
+          ? `Status diubah menjadi ${newStatus}. License: ${response.data.licenseKey}`
+          : `Status diubah menjadi ${newStatus}`
+      });
+      loadData();
+    } catch (error) {
+      console.error('Update status error:', error);
+      toast({ title: "Error", description: "Gagal update status", variant: "destructive" });
+    }
+  };
+
   const formatRupiah = (n: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(n);
   const formatDate = (d: string) => new Date(d).toLocaleString('id-ID');
 
@@ -495,6 +659,23 @@ const Admin = () => {
   };
 
   const activeBackgroundsList = backgrounds.filter(bg => bg.is_active);
+
+  const getIconTypeLabel = (type: string) => {
+    const labels: Record<string, string> = {
+      'whatsapp': 'WhatsApp',
+      'whatsapp-group': 'WhatsApp Grup',
+      'whatsapp-contact': 'WhatsApp Kontak',
+      'telegram': 'Telegram',
+      'instagram': 'Instagram',
+      'facebook': 'Facebook',
+      'twitter': 'Twitter/X',
+      'youtube': 'YouTube',
+      'tiktok': 'TikTok',
+      'discord': 'Discord',
+      'link': 'Link Umum'
+    };
+    return labels[type] || type;
+  };
 
   if (!isAuthenticated) {
     return (
@@ -622,8 +803,14 @@ const Admin = () => {
             <TabsTrigger value="packages" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground font-display text-xs md:text-sm">
               <Package className="w-3 md:w-4 h-3 md:h-4 mr-1 md:mr-2" /> Paket
             </TabsTrigger>
+            <TabsTrigger value="links" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground font-display text-xs md:text-sm">
+              <Link className="w-3 md:w-4 h-3 md:h-4 mr-1 md:mr-2" /> Links
+            </TabsTrigger>
             <TabsTrigger value="transactions" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground font-display text-xs md:text-sm">
               <DollarSign className="w-3 md:w-4 h-3 md:h-4 mr-1 md:mr-2" /> Transaksi
+            </TabsTrigger>
+            <TabsTrigger value="history" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground font-display text-xs md:text-sm">
+              <History className="w-3 md:w-4 h-3 md:h-4 mr-1 md:mr-2" /> Login
             </TabsTrigger>
           </TabsList>
 
@@ -856,13 +1043,7 @@ const Admin = () => {
                           <Pencil className="w-4 h-4" />
                         </Button>
                         {bg.background_type === 'video' && (
-                          <Button 
-                            size="icon" 
-                            variant="ghost" 
-                            onClick={() => handleToggleMuteBackground(bg.id, bg.is_muted)} 
-                            className={`h-8 w-8 ${bg.is_muted ? 'hover:bg-muted' : 'hover:bg-success/10 text-success'}`}
-                            title={bg.is_muted ? 'Unmute' : 'Mute'}
-                          >
+                          <Button size="icon" variant="ghost" onClick={() => handleToggleMuteBackground(bg.id, bg.is_muted)} className="hover:bg-primary/10 h-8 w-8" title={bg.is_muted ? 'Unmute' : 'Mute'}>
                             {bg.is_muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
                           </Button>
                         )}
@@ -926,6 +1107,122 @@ const Admin = () => {
                           </Button>
                           <Switch checked={pkg.is_active} onCheckedChange={() => handleTogglePackage(pkg.id, pkg.is_active)} />
                         </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </TabsContent>
+
+          {/* Social Links Tab */}
+          <TabsContent value="links" className="space-y-4 md:space-y-6">
+            {/* Add New Link Form */}
+            <div className="glass-card p-4 md:p-6 rounded-xl">
+              <h2 className="text-base md:text-lg font-display font-semibold mb-4 text-foreground flex items-center gap-2">
+                <Plus className="w-4 md:w-5 h-4 md:h-5 text-primary" /> Tambah Link/Icon Baru
+              </h2>
+              <form onSubmit={handleAddSocialLink} className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-foreground text-sm">Nama (internal)</Label>
+                    <Input
+                      value={newLink.name}
+                      onChange={(e) => setNewLink(prev => ({ ...prev, name: e.target.value }))}
+                      placeholder="whatsapp_group"
+                      className="bg-muted/50 border-border mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-foreground text-sm">Tipe Icon</Label>
+                    <select
+                      value={newLink.icon_type}
+                      onChange={(e) => setNewLink(prev => ({ ...prev, icon_type: e.target.value }))}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-muted/50 text-foreground mt-1 text-sm"
+                    >
+                      <option value="whatsapp">WhatsApp</option>
+                      <option value="whatsapp-group">WhatsApp Grup</option>
+                      <option value="whatsapp-contact">WhatsApp Kontak</option>
+                      <option value="telegram">Telegram</option>
+                      <option value="instagram">Instagram</option>
+                      <option value="facebook">Facebook</option>
+                      <option value="twitter">Twitter/X</option>
+                      <option value="youtube">YouTube</option>
+                      <option value="tiktok">TikTok</option>
+                      <option value="discord">Discord</option>
+                      <option value="link">Link Umum</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-foreground text-sm">URL</Label>
+                  <Input
+                    value={newLink.url}
+                    onChange={(e) => setNewLink(prev => ({ ...prev, url: e.target.value }))}
+                    placeholder="https://wa.me/62xxx atau https://chat.whatsapp.com/xxx"
+                    className="bg-muted/50 border-border mt-1"
+                  />
+                </div>
+                <div>
+                  <Label className="text-foreground text-sm">Label (tampilan)</Label>
+                  <Input
+                    value={newLink.label}
+                    onChange={(e) => setNewLink(prev => ({ ...prev, label: e.target.value }))}
+                    placeholder="Grup / Kontak / Admin"
+                    className="bg-muted/50 border-border mt-1"
+                  />
+                </div>
+                <Button type="submit" className="btn-primary text-primary-foreground text-sm">
+                  <Plus className="w-4 h-4 mr-2" /> Tambah Link
+                </Button>
+              </form>
+            </div>
+
+            {/* Links List */}
+            <div className="glass-card p-4 md:p-6 rounded-xl">
+              <h2 className="text-base md:text-lg font-display font-semibold mb-4 text-foreground">
+                Daftar Link ({socialLinks.length})
+              </h2>
+              {loading ? (
+                <p className="text-muted-foreground text-center py-8 text-sm">Memuat...</p>
+              ) : socialLinks.length === 0 ? (
+                <p className="text-muted-foreground text-center py-8 text-sm">Belum ada link</p>
+              ) : (
+                <div className="space-y-3">
+                  {socialLinks.map((link, index) => (
+                    <div key={link.id} className="flex flex-col sm:flex-row items-start sm:items-center gap-3 md:gap-4 p-3 md:p-4 bg-muted/30 rounded-lg border border-border/50 hover:border-primary/30 transition-colors">
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                        <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                          <Link className="w-5 h-5 text-primary" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-medium text-foreground text-sm md:text-base">{link.label}</p>
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
+                            <span>{getIconTypeLabel(link.icon_type)}</span>
+                            <span className={`px-2 py-0.5 rounded-full ${link.is_active ? 'bg-success/20 text-success' : 'bg-muted text-muted-foreground'}`}>
+                              {link.is_active ? 'Aktif' : 'Nonaktif'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted-foreground truncate max-w-xs mt-1">{link.url}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 w-full sm:w-auto justify-end flex-wrap">
+                        <Button size="icon" variant="ghost" onClick={() => copyToClipboard(link.url)} className="hover:bg-primary/10 h-8 w-8" title="Salin link">
+                          <Copy className="w-4 h-4" />
+                        </Button>
+                        <Button size="icon" variant="ghost" onClick={() => { setEditingLink(link); setEditLinkDialog(true); }} className="hover:bg-primary/10 h-8 w-8" title="Edit">
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <Switch checked={link.is_active} onCheckedChange={() => handleToggleSocialLink(link.id, link.is_active)} />
+                        <Button size="icon" variant="ghost" onClick={() => handleMoveSocialLink(link.id, 'up')} disabled={index === 0} className="hover:bg-primary/10 h-8 w-8">
+                          <ArrowUp className="w-4 h-4" />
+                        </Button>
+                        <Button size="icon" variant="ghost" onClick={() => handleMoveSocialLink(link.id, 'down')} disabled={index === socialLinks.length - 1} className="hover:bg-primary/10 h-8 w-8">
+                          <ArrowDown className="w-4 h-4" />
+                        </Button>
+                        <Button size="icon" variant="ghost" className="text-destructive hover:bg-destructive/10 h-8 w-8" onClick={() => handleDeleteSocialLink(link.id)}>
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
                       </div>
                     </div>
                   ))}
@@ -1009,14 +1306,81 @@ const Admin = () => {
                         {tx.status.toUpperCase()}
                       </span>
                     </div>
+                    {tx.license_key && (
+                      <div className="flex items-center gap-2 bg-success/10 p-2 rounded-lg">
+                        <span className="text-xs text-success">License:</span>
+                        <code className="text-xs font-mono text-success">{tx.license_key}</code>
+                        <Button size="icon" variant="ghost" onClick={() => copyToClipboard(tx.license_key!)} className="h-6 w-6 hover:bg-success/20">
+                          <Copy className="w-3 h-3 text-success" />
+                        </Button>
+                      </div>
+                    )}
                     <div className="flex justify-between items-center">
                       <span className="text-xs text-muted-foreground">{formatDate(tx.created_at)}</span>
-                      <Button size="icon" variant="ghost" className="text-destructive hover:bg-destructive/10 h-8 w-8" onClick={() => handleDeleteTransaction(tx.id)}>
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        {tx.status === 'pending' && (
+                          <Button size="sm" variant="outline" onClick={() => handleUpdateTransactionStatus(tx.transaction_id, 'paid')} className="border-success/50 text-success hover:bg-success/10 text-xs h-8">
+                            <Check className="w-3 h-3 mr-1" /> Set Paid
+                          </Button>
+                        )}
+                        <Button size="icon" variant="ghost" className="text-destructive hover:bg-destructive/10 h-8 w-8" onClick={() => handleDeleteTransaction(tx.id)}>
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 ))
+              )}
+            </div>
+          </TabsContent>
+
+          {/* Login History Tab */}
+          <TabsContent value="history" className="space-y-4 md:space-y-6">
+            <div className="glass-card p-4 md:p-6 rounded-xl">
+              <h2 className="text-base md:text-lg font-display font-semibold mb-4 text-foreground flex items-center gap-2">
+                <History className="w-4 md:w-5 h-4 md:h-5 text-primary" /> Riwayat Login Admin
+              </h2>
+              <p className="text-xs text-muted-foreground mb-4">
+                Device ID Anda saat ini: <code className="bg-muted px-2 py-0.5 rounded">{currentDeviceId.substring(0, 30)}...</code>
+              </p>
+              {loginHistory.length === 0 ? (
+                <p className="text-muted-foreground text-center py-8 text-sm">Belum ada riwayat login</p>
+              ) : (
+                <div className="space-y-3">
+                  {loginHistory.map((log) => {
+                    const isCurrentDevice = log.device_id === currentDeviceId;
+                    return (
+                      <div key={log.id} className={`p-3 md:p-4 rounded-lg border ${isCurrentDevice ? 'border-success/50 bg-success/5' : 'border-border/50 bg-muted/30'}`}>
+                        <div className="flex items-start gap-3">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isCurrentDevice ? 'bg-success/20' : 'bg-muted'}`}>
+                            <Smartphone className={`w-5 h-5 ${isCurrentDevice ? 'text-success' : 'text-muted-foreground'}`} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="font-medium text-foreground text-sm">{log.device_name || 'Unknown Device'}</p>
+                              {isCurrentDevice && (
+                                <span className="bg-success/20 text-success text-[10px] px-2 py-0.5 rounded-full">
+                                  Perangkat ini
+                                </span>
+                              )}
+                              {!isCurrentDevice && (
+                                <span className="bg-warning/20 text-warning text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1">
+                                  <AlertTriangle className="w-3 h-3" /> Perangkat lain
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {formatDate(log.login_time)}
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-1 truncate">
+                              ID: {log.device_id.substring(0, 30)}...
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
           </TabsContent>
@@ -1177,6 +1541,67 @@ const Admin = () => {
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditPkgDialog(false)}>Batal</Button>
             <Button onClick={handleUpdatePackage} className="btn-primary text-primary-foreground">Simpan</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Social Link Dialog */}
+      <Dialog open={editLinkDialog} onOpenChange={setEditLinkDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Link</DialogTitle>
+          </DialogHeader>
+          {editingLink && (
+            <div className="space-y-4">
+              <div>
+                <Label className="text-sm">Nama (internal)</Label>
+                <Input
+                  value={editingLink.name}
+                  onChange={(e) => setEditingLink({ ...editingLink, name: e.target.value })}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label className="text-sm">Tipe Icon</Label>
+                <select
+                  value={editingLink.icon_type}
+                  onChange={(e) => setEditingLink({ ...editingLink, icon_type: e.target.value })}
+                  className="w-full h-10 px-3 rounded-md border border-input bg-background mt-1"
+                >
+                  <option value="whatsapp">WhatsApp</option>
+                  <option value="whatsapp-group">WhatsApp Grup</option>
+                  <option value="whatsapp-contact">WhatsApp Kontak</option>
+                  <option value="telegram">Telegram</option>
+                  <option value="instagram">Instagram</option>
+                  <option value="facebook">Facebook</option>
+                  <option value="twitter">Twitter/X</option>
+                  <option value="youtube">YouTube</option>
+                  <option value="tiktok">TikTok</option>
+                  <option value="discord">Discord</option>
+                  <option value="link">Link Umum</option>
+                </select>
+              </div>
+              <div>
+                <Label className="text-sm">URL</Label>
+                <Input
+                  value={editingLink.url}
+                  onChange={(e) => setEditingLink({ ...editingLink, url: e.target.value })}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label className="text-sm">Label (tampilan)</Label>
+                <Input
+                  value={editingLink.label}
+                  onChange={(e) => setEditingLink({ ...editingLink, label: e.target.value })}
+                  className="mt-1"
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditLinkDialog(false)}>Batal</Button>
+            <Button onClick={handleUpdateSocialLink} className="btn-primary text-primary-foreground">Simpan</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

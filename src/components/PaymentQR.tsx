@@ -1,7 +1,17 @@
-import { FC } from 'react';
+import { FC, useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Copy } from 'lucide-react';
+import { Copy, MessageCircle, AlertCircle } from 'lucide-react';
 import GlobalBackground from './GlobalBackground';
+import { supabase } from '@/integrations/supabase/client';
+
+interface SocialLink {
+  id: string;
+  name: string;
+  icon_type: string;
+  url: string;
+  label: string;
+  is_active: boolean;
+}
 
 interface PaymentQRProps {
   paymentData: {
@@ -26,6 +36,35 @@ const PaymentQR: FC<PaymentQRProps> = ({
   onCopy,
   formatRupiah
 }) => {
+  const [showContactHint, setShowContactHint] = useState(false);
+  const [contactLink, setContactLink] = useState<SocialLink | null>(null);
+
+  useEffect(() => {
+    // Show contact hint after 30 seconds
+    const timer = setTimeout(() => {
+      setShowContactHint(true);
+    }, 30000);
+
+    // Fetch contact link
+    const fetchContactLink = async () => {
+      const { data } = await supabase
+        .from('social_links')
+        .select('*')
+        .eq('is_active', true)
+        .or('icon_type.eq.whatsapp-contact,icon_type.eq.whatsapp')
+        .order('sort_order')
+        .limit(1);
+      
+      if (data && data.length > 0) {
+        setContactLink(data[0] as SocialLink);
+      }
+    };
+
+    fetchContactLink();
+
+    return () => clearTimeout(timer);
+  }, []);
+
   const qrUrl = paymentData.qris_url ||
     `https://larabert-qrgen.hf.space/v1/create-qr-code?size=500x500&style=2&color=0D8BA5&data=${encodeURIComponent(paymentData.qr_string)}`;
 
@@ -71,6 +110,32 @@ const PaymentQR: FC<PaymentQRProps> = ({
           <div className="flex items-center justify-center gap-3 mb-6 text-warning">
             <div className="w-3 h-3 bg-warning rounded-full animate-pulse" />
             <span className="font-medium">{statusMsg}</span>
+          </div>
+        )}
+
+        {/* Contact Hint - shown after 30 seconds */}
+        {showContactHint && contactLink && (
+          <div className="bg-primary/10 border border-primary/30 p-4 rounded-xl mb-6">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-primary flex-shrink-0 mt-0.5" />
+              <div className="text-left">
+                <p className="text-sm text-foreground font-medium mb-2">
+                  Sudah bayar tapi status belum berubah?
+                </p>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Jika pembayaran sudah dilakukan namun status belum berubah, silakan hubungi admin untuk verifikasi manual.
+                </p>
+                <a
+                  href={contactLink.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 bg-success/20 hover:bg-success/30 text-success px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                >
+                  <MessageCircle className="w-4 h-4" />
+                  Hubungi Admin
+                </a>
+              </div>
+            </div>
           </div>
         )}
 
