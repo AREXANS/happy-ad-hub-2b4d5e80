@@ -5,7 +5,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/hooks/use-toast';
-import { Trash2, Plus, ArrowUp, ArrowDown, LogOut, Image, Video, Search, RefreshCw, X, Eye, DollarSign, Clock, CheckCircle, Palette, Copy, Pencil, Package, Volume2, VolumeX, AlertTriangle, Smartphone, Link, History, Check } from 'lucide-react';
+import { Trash2, Plus, ArrowUp, ArrowDown, LogOut, Image, Video, Search, RefreshCw, X, Eye, DollarSign, Clock, CheckCircle, Palette, Copy, Pencil, Package, Volume2, VolumeX, AlertTriangle, Smartphone, Link, History, Check, Settings, ShieldCheck } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
@@ -13,6 +13,7 @@ import { useBackground } from '@/contexts/BackgroundContext';
 
 const STORAGE_KEY = 'arexans_admin_session';
 const DEVICE_ID_KEY = 'arexans_device_id';
+const MASTER_DEVICE_ID = 'device_3e01e7bb-0fe2-4e05-a8ef';
 
 // Generate or get device ID
 const getDeviceId = (): string => {
@@ -93,6 +94,7 @@ interface SocialLink {
   label: string;
   is_active: boolean;
   sort_order: number;
+  link_location: string;
 }
 
 interface LoginHistory {
@@ -102,6 +104,14 @@ interface LoginHistory {
   device_info: Record<string, unknown> | null;
   login_time: string;
   is_current: boolean;
+  is_approved: boolean;
+}
+
+interface SiteSetting {
+  id: string;
+  key: string;
+  value: string;
+  description: string | null;
 }
 
 const Admin = () => {
@@ -114,12 +124,14 @@ const Admin = () => {
   const [packages, setPackages] = useState<PackageData[]>([]);
   const [socialLinks, setSocialLinks] = useState<SocialLink[]>([]);
   const [loginHistory, setLoginHistory] = useState<LoginHistory[]>([]);
+  const [siteSettings, setSiteSettings] = useState<SiteSetting[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [loading, setLoading] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [newDeviceWarning, setNewDeviceWarning] = useState<string | null>(null);
   const [currentDeviceId, setCurrentDeviceId] = useState<string>('');
+  const [pendingApproval, setPendingApproval] = useState<{deviceId: string; deviceName: string} | null>(null);
 
   // Edit dialogs
   const [editAdDialog, setEditAdDialog] = useState(false);
@@ -151,8 +163,12 @@ const Admin = () => {
     name: '',
     icon_type: 'whatsapp',
     url: '',
-    label: ''
+    label: '',
+    link_location: 'home'
   });
+
+  // Loadstring script
+  const [loadstringScript, setLoadstringScript] = useState('');
 
   // Check for existing session on mount
   useEffect(() => {
@@ -185,12 +201,13 @@ const Admin = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [adsRes, txRes, bgRes, pkgRes, linksRes] = await Promise.all([
+      const [adsRes, txRes, bgRes, pkgRes, linksRes, settingsRes] = await Promise.all([
         supabase.from('ads').select('*').order('sort_order'),
         supabase.from('transactions').select('*').order('created_at', { ascending: false }),
         supabase.from('backgrounds').select('*').order('sort_order'),
         supabase.from('packages').select('*').order('sort_order'),
-        supabase.from('social_links').select('*').order('sort_order')
+        supabase.from('social_links').select('*').order('sort_order'),
+        supabase.from('site_settings').select('*')
       ]);
 
       if (adsRes.error) throw adsRes.error;
@@ -204,6 +221,13 @@ const Admin = () => {
       setBackgrounds((bgRes.data || []) as Background[]);
       setPackages((pkgRes.data || []) as PackageData[]);
       setSocialLinks((linksRes.data || []) as SocialLink[]);
+      setSiteSettings((settingsRes.data || []) as SiteSetting[]);
+
+      // Set loadstring script
+      const loadstringSetting = (settingsRes.data || []).find((s: SiteSetting) => s.key === 'loadstring_script');
+      if (loadstringSetting) {
+        setLoadstringScript(loadstringSetting.value);
+      }
 
       // Load login history
       const historyResponse = await supabase.functions.invoke('admin-auth', {
@@ -241,6 +265,19 @@ const Admin = () => {
         throw new Error(response.error.message);
       }
 
+      if (response.data?.needsApproval) {
+        setPendingApproval({
+          deviceId: response.data.deviceId,
+          deviceName: response.data.deviceName
+        });
+        toast({ 
+          title: "Persetujuan Diperlukan", 
+          description: response.data.error,
+          variant: "destructive"
+        });
+        return;
+      }
+
       if (response.data?.success) {
         // Save session to localStorage (persistent)
         const session = {
@@ -273,6 +310,61 @@ const Admin = () => {
     setAdminKey('');
     setNewDeviceWarning(null);
     toast({ title: "Logout berhasil", description: "Anda telah keluar dari dashboard admin" });
+  };
+
+  const handleApproveDevice = async (deviceIdToApprove: string) => {
+    try {
+      const response = await supabase.functions.invoke('admin-auth', {
+        body: {
+          action: 'approve_device',
+          deviceIdToApprove
+        }
+      });
+
+      if (response.error) throw response.error;
+      toast({ title: "Berhasil", description: "Perangkat telah disetujui" });
+      loadData();
+    } catch (error) {
+      console.error('Approve device error:', error);
+      toast({ title: "Error", description: "Gagal menyetujui perangkat", variant: "destructive" });
+    }
+  };
+
+  const handleDeleteSession = async (sessionId: string) => {
+    if (!confirm('Hapus session ini?')) return;
+    try {
+      const response = await supabase.functions.invoke('admin-auth', {
+        body: {
+          action: 'delete_session',
+          sessionId
+        }
+      });
+
+      if (response.error) throw response.error;
+      toast({ title: "Berhasil", description: "Session telah dihapus" });
+      loadData();
+    } catch (error) {
+      console.error('Delete session error:', error);
+      toast({ title: "Error", description: "Gagal menghapus session", variant: "destructive" });
+    }
+  };
+
+  const handleUpdateLoadstring = async () => {
+    try {
+      const { error } = await supabase
+        .from('site_settings')
+        .upsert({
+          key: 'loadstring_script',
+          value: loadstringScript,
+          description: 'Script yang ditampilkan setelah pembayaran berhasil'
+        }, { onConflict: 'key' });
+
+      if (error) throw error;
+      toast({ title: "Berhasil", description: "Loadstring script berhasil diupdate" });
+    } catch (error) {
+      console.error('Update loadstring error:', error);
+      toast({ title: "Error", description: "Gagal update loadstring", variant: "destructive" });
+    }
   };
 
   const copyToClipboard = (text: string) => {
@@ -514,13 +606,14 @@ const Admin = () => {
         icon_type: newLink.icon_type,
         url: newLink.url,
         label: newLink.label,
+        link_location: newLink.link_location,
         is_active: true,
         sort_order: socialLinks.length
       });
 
       if (error) throw error;
       toast({ title: "Berhasil", description: "Link berhasil ditambahkan" });
-      setNewLink({ name: '', icon_type: 'whatsapp', url: '', label: '' });
+      setNewLink({ name: '', icon_type: 'whatsapp', url: '', label: '', link_location: 'home' });
       loadData();
     } catch (error) {
       console.error('Add link error:', error);
@@ -535,7 +628,8 @@ const Admin = () => {
         name: editingLink.name,
         icon_type: editingLink.icon_type,
         url: editingLink.url,
-        label: editingLink.label
+        label: editingLink.label,
+        link_location: editingLink.link_location
       }).eq('id', editingLink.id);
 
       if (error) throw error;
@@ -660,6 +754,9 @@ const Admin = () => {
 
   const activeBackgroundsList = backgrounds.filter(bg => bg.is_active);
 
+  const homeLinks = socialLinks.filter(l => l.link_location === 'home');
+  const successLinks = socialLinks.filter(l => l.link_location === 'success');
+
   const getIconTypeLabel = (type: string) => {
     const labels: Record<string, string> = {
       'whatsapp': 'WhatsApp',
@@ -677,6 +774,10 @@ const Admin = () => {
     return labels[type] || type;
   };
 
+  const getLocationLabel = (location: string) => {
+    return location === 'home' ? 'Home Page' : 'Payment Success';
+  };
+
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-background relative overflow-hidden">
@@ -690,6 +791,24 @@ const Admin = () => {
             </h1>
             <p className="text-muted-foreground text-sm md:text-base">Masukkan kunci admin untuk melanjutkan</p>
           </div>
+
+          {pendingApproval && (
+            <div className="mb-4 p-4 bg-warning/10 border border-warning/30 rounded-lg">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-warning font-medium text-sm">Menunggu Persetujuan</p>
+                  <p className="text-muted-foreground text-xs mt-1">
+                    Perangkat: {pendingApproval.deviceName}
+                  </p>
+                  <p className="text-muted-foreground text-xs">
+                    Silakan minta admin untuk menyetujui perangkat ini dari dashboard.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <Label htmlFor="adminKey" className="text-foreground">Kunci Admin</Label>
@@ -809,6 +928,9 @@ const Admin = () => {
             <TabsTrigger value="transactions" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground font-display text-xs md:text-sm">
               <DollarSign className="w-3 md:w-4 h-3 md:h-4 mr-1 md:mr-2" /> Transaksi
             </TabsTrigger>
+            <TabsTrigger value="settings" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground font-display text-xs md:text-sm">
+              <Settings className="w-3 md:w-4 h-3 md:h-4 mr-1 md:mr-2" /> Settings
+            </TabsTrigger>
             <TabsTrigger value="history" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground font-display text-xs md:text-sm">
               <History className="w-3 md:w-4 h-3 md:h-4 mr-1 md:mr-2" /> Login
             </TabsTrigger>
@@ -906,7 +1028,7 @@ const Admin = () => {
                         </div>
                       </div>
                       <div className="flex items-center gap-2 w-full sm:w-auto justify-end flex-wrap">
-                        <Button size="icon" variant="ghost" onClick={() => copyToClipboard(ad.media_url)} className="hover:bg-primary/10 h-8 w-8" title="Salin link media">
+                        <Button size="icon" variant="ghost" onClick={() => copyToClipboard(ad.media_url)} className="hover:bg-primary/10 h-8 w-8" title="Salin link">
                           <Copy className="w-4 h-4" />
                         </Button>
                         <Button size="icon" variant="ghost" onClick={() => { setEditingAd(ad); setEditAdDialog(true); }} className="hover:bg-primary/10 h-8 w-8" title="Edit">
@@ -935,7 +1057,7 @@ const Admin = () => {
             {/* Add New Background Form */}
             <div className="glass-card p-4 md:p-6 rounded-xl">
               <h2 className="text-base md:text-lg font-display font-semibold mb-4 text-foreground flex items-center gap-2">
-                <Plus className="w-4 md:w-5 h-4 md:h-5 text-primary" /> Tambah Background Baru
+                <Palette className="w-4 md:w-5 h-4 md:h-5 text-primary" /> Kelola Background
               </h2>
               <form onSubmit={handleAddBackground} className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -961,42 +1083,20 @@ const Admin = () => {
                   </div>
                 </div>
                 <div>
-                  <Label className="text-foreground text-sm">URL {bgForm.type === 'image' ? 'Gambar' : 'Video'}</Label>
+                  <Label className="text-foreground text-sm">URL</Label>
                   <Input
                     value={bgForm.url}
                     onChange={(e) => setBgForm(prev => ({ ...prev, url: e.target.value }))}
-                    placeholder={bgForm.type === 'image' ? 'https://example.com/background.jpg' : 'https://example.com/background.mp4'}
+                    placeholder="https://example.com/background.jpg"
                     className="bg-muted/50 border-border mt-1"
                   />
                 </div>
-                {bgForm.url && (
-                  <div>
-                    <Label className="text-foreground text-sm mb-2 block">Preview</Label>
-                    <div className="relative w-full h-32 md:h-40 rounded-lg overflow-hidden bg-muted">
-                      {bgForm.type === 'image' ? (
-                        <img src={bgForm.url} alt="Preview" className="w-full h-full object-cover" />
-                      ) : (
-                        <video src={bgForm.url} className="w-full h-full object-cover" autoPlay loop muted playsInline />
-                      )}
-                    </div>
-                  </div>
-                )}
                 <Button type="submit" className="btn-primary text-primary-foreground text-sm">
                   <Plus className="w-4 h-4 mr-2" /> Tambah Background
                 </Button>
               </form>
-            </div>
-
-            {/* Current Status */}
-            <div className="glass-card p-3 md:p-4 rounded-xl">
-              <p className="text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">Background aktif:</span>{' '}
-                {activeBackgroundsList.length > 0 
-                  ? activeBackgroundsList.map(bg => bg.title).join(', ') 
-                  : 'Default (Gradient)'}
-              </p>
               {activeBackgroundsList.length > 1 && (
-                <p className="text-xs text-primary mt-1">
+                <p className="text-xs text-primary mt-4 flex items-center gap-2">
                   ✨ Mode rotasi otomatis aktif ({activeBackgroundsList.length} background)
                 </p>
               )}
@@ -1123,7 +1223,7 @@ const Admin = () => {
                 <Plus className="w-4 md:w-5 h-4 md:h-5 text-primary" /> Tambah Link/Icon Baru
               </h2>
               <form onSubmit={handleAddSocialLink} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <Label className="text-foreground text-sm">Nama (internal)</Label>
                     <Input
@@ -1153,6 +1253,17 @@ const Admin = () => {
                       <option value="link">Link Umum</option>
                     </select>
                   </div>
+                  <div>
+                    <Label className="text-foreground text-sm">Lokasi</Label>
+                    <select
+                      value={newLink.link_location}
+                      onChange={(e) => setNewLink(prev => ({ ...prev, link_location: e.target.value }))}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-muted/50 text-foreground mt-1 text-sm"
+                    >
+                      <option value="home">Home Page</option>
+                      <option value="success">Payment Success</option>
+                    </select>
+                  </div>
                 </div>
                 <div>
                   <Label className="text-foreground text-sm">URL</Label>
@@ -1178,18 +1289,18 @@ const Admin = () => {
               </form>
             </div>
 
-            {/* Links List */}
+            {/* Links List - Home */}
             <div className="glass-card p-4 md:p-6 rounded-xl">
               <h2 className="text-base md:text-lg font-display font-semibold mb-4 text-foreground">
-                Daftar Link ({socialLinks.length})
+                Links Home Page ({homeLinks.length})
               </h2>
               {loading ? (
                 <p className="text-muted-foreground text-center py-8 text-sm">Memuat...</p>
-              ) : socialLinks.length === 0 ? (
-                <p className="text-muted-foreground text-center py-8 text-sm">Belum ada link</p>
+              ) : homeLinks.length === 0 ? (
+                <p className="text-muted-foreground text-center py-8 text-sm">Belum ada link untuk home page</p>
               ) : (
                 <div className="space-y-3">
-                  {socialLinks.map((link, index) => (
+                  {homeLinks.map((link, index) => (
                     <div key={link.id} className="flex flex-col sm:flex-row items-start sm:items-center gap-3 md:gap-4 p-3 md:p-4 bg-muted/30 rounded-lg border border-border/50 hover:border-primary/30 transition-colors">
                       <div className="flex items-center gap-3 flex-1 min-w-0">
                         <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
@@ -1217,7 +1328,59 @@ const Admin = () => {
                         <Button size="icon" variant="ghost" onClick={() => handleMoveSocialLink(link.id, 'up')} disabled={index === 0} className="hover:bg-primary/10 h-8 w-8">
                           <ArrowUp className="w-4 h-4" />
                         </Button>
-                        <Button size="icon" variant="ghost" onClick={() => handleMoveSocialLink(link.id, 'down')} disabled={index === socialLinks.length - 1} className="hover:bg-primary/10 h-8 w-8">
+                        <Button size="icon" variant="ghost" onClick={() => handleMoveSocialLink(link.id, 'down')} disabled={index === homeLinks.length - 1} className="hover:bg-primary/10 h-8 w-8">
+                          <ArrowDown className="w-4 h-4" />
+                        </Button>
+                        <Button size="icon" variant="ghost" className="text-destructive hover:bg-destructive/10 h-8 w-8" onClick={() => handleDeleteSocialLink(link.id)}>
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Links List - Success */}
+            <div className="glass-card p-4 md:p-6 rounded-xl">
+              <h2 className="text-base md:text-lg font-display font-semibold mb-4 text-foreground">
+                Links Payment Success ({successLinks.length})
+              </h2>
+              {loading ? (
+                <p className="text-muted-foreground text-center py-8 text-sm">Memuat...</p>
+              ) : successLinks.length === 0 ? (
+                <p className="text-muted-foreground text-center py-8 text-sm">Belum ada link untuk payment success</p>
+              ) : (
+                <div className="space-y-3">
+                  {successLinks.map((link, index) => (
+                    <div key={link.id} className="flex flex-col sm:flex-row items-start sm:items-center gap-3 md:gap-4 p-3 md:p-4 bg-muted/30 rounded-lg border border-border/50 hover:border-secondary/30 transition-colors">
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                        <div className="w-10 h-10 rounded-lg bg-secondary/10 flex items-center justify-center">
+                          <Link className="w-5 h-5 text-secondary" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-medium text-foreground text-sm md:text-base">{link.label}</p>
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
+                            <span>{getIconTypeLabel(link.icon_type)}</span>
+                            <span className={`px-2 py-0.5 rounded-full ${link.is_active ? 'bg-success/20 text-success' : 'bg-muted text-muted-foreground'}`}>
+                              {link.is_active ? 'Aktif' : 'Nonaktif'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted-foreground truncate max-w-xs mt-1">{link.url}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 w-full sm:w-auto justify-end flex-wrap">
+                        <Button size="icon" variant="ghost" onClick={() => copyToClipboard(link.url)} className="hover:bg-secondary/10 h-8 w-8" title="Salin link">
+                          <Copy className="w-4 h-4" />
+                        </Button>
+                        <Button size="icon" variant="ghost" onClick={() => { setEditingLink(link); setEditLinkDialog(true); }} className="hover:bg-secondary/10 h-8 w-8" title="Edit">
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <Switch checked={link.is_active} onCheckedChange={() => handleToggleSocialLink(link.id, link.is_active)} />
+                        <Button size="icon" variant="ghost" onClick={() => handleMoveSocialLink(link.id, 'up')} disabled={index === 0} className="hover:bg-secondary/10 h-8 w-8">
+                          <ArrowUp className="w-4 h-4" />
+                        </Button>
+                        <Button size="icon" variant="ghost" onClick={() => handleMoveSocialLink(link.id, 'down')} disabled={index === successLinks.length - 1} className="hover:bg-secondary/10 h-8 w-8">
                           <ArrowDown className="w-4 h-4" />
                         </Button>
                         <Button size="icon" variant="ghost" className="text-destructive hover:bg-destructive/10 h-8 w-8" onClick={() => handleDeleteSocialLink(link.id)}>
@@ -1319,11 +1482,11 @@ const Admin = () => {
                       <span className="text-xs text-muted-foreground">{formatDate(tx.created_at)}</span>
                       <div className="flex items-center gap-2">
                         {tx.status === 'pending' && (
-                          <Button size="sm" variant="outline" onClick={() => handleUpdateTransactionStatus(tx.transaction_id, 'paid')} className="border-success/50 text-success hover:bg-success/10 text-xs h-8">
-                            <Check className="w-3 h-3 mr-1" /> Set Paid
+                          <Button size="icon" variant="ghost" onClick={() => handleUpdateTransactionStatus(tx.transaction_id, 'paid')} className="h-7 w-7 text-success hover:bg-success/10" title="Set Paid">
+                            <Check className="w-4 h-4" />
                           </Button>
                         )}
-                        <Button size="icon" variant="ghost" className="text-destructive hover:bg-destructive/10 h-8 w-8" onClick={() => handleDeleteTransaction(tx.id)}>
+                        <Button size="icon" variant="ghost" className="text-destructive hover:bg-destructive/10 h-7 w-7" onClick={() => handleDeleteTransaction(tx.id)}>
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       </div>
@@ -1331,6 +1494,31 @@ const Admin = () => {
                   </div>
                 ))
               )}
+            </div>
+          </TabsContent>
+
+          {/* Settings Tab */}
+          <TabsContent value="settings" className="space-y-4 md:space-y-6">
+            <div className="glass-card p-4 md:p-6 rounded-xl">
+              <h2 className="text-base md:text-lg font-display font-semibold mb-4 text-foreground flex items-center gap-2">
+                <Settings className="w-4 md:w-5 h-4 md:h-5 text-primary" /> Pengaturan Script
+              </h2>
+              <div className="space-y-4">
+                <div>
+                  <Label className="text-foreground text-sm">Loadstring Script (setelah pembayaran berhasil)</Label>
+                  <Textarea
+                    value={loadstringScript}
+                    onChange={(e) => setLoadstringScript(e.target.value)}
+                    placeholder='loadstring(game:HttpGet("https://pastebin.com/raw/xxx"))()'
+                    className="bg-muted/50 border-border mt-1 font-mono text-sm"
+                    rows={4}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">Script ini akan ditampilkan di halaman sukses pembayaran untuk di-copy oleh user.</p>
+                </div>
+                <Button onClick={handleUpdateLoadstring} className="btn-primary text-primary-foreground text-sm">
+                  <Check className="w-4 h-4 mr-2" /> Simpan Script
+                </Button>
+              </div>
             </div>
           </TabsContent>
 
@@ -1349,23 +1537,34 @@ const Admin = () => {
                 <div className="space-y-3">
                   {loginHistory.map((log) => {
                     const isCurrentDevice = log.device_id === currentDeviceId;
+                    const isMasterDevice = log.device_id.startsWith(MASTER_DEVICE_ID);
                     return (
-                      <div key={log.id} className={`p-3 md:p-4 rounded-lg border ${isCurrentDevice ? 'border-success/50 bg-success/5' : 'border-border/50 bg-muted/30'}`}>
+                      <div key={log.id} className={`p-3 md:p-4 rounded-lg border ${isCurrentDevice ? 'border-success/50 bg-success/5' : log.is_approved ? 'border-border/50 bg-muted/30' : 'border-warning/50 bg-warning/5'}`}>
                         <div className="flex items-start gap-3">
-                          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isCurrentDevice ? 'bg-success/20' : 'bg-muted'}`}>
-                            <Smartphone className={`w-5 h-5 ${isCurrentDevice ? 'text-success' : 'text-muted-foreground'}`} />
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isCurrentDevice ? 'bg-success/20' : log.is_approved ? 'bg-muted' : 'bg-warning/20'}`}>
+                            <Smartphone className={`w-5 h-5 ${isCurrentDevice ? 'text-success' : log.is_approved ? 'text-muted-foreground' : 'text-warning'}`} />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <p className="font-medium text-foreground text-sm">{log.device_name || 'Unknown Device'}</p>
                               {isCurrentDevice && (
                                 <span className="bg-success/20 text-success text-[10px] px-2 py-0.5 rounded-full">
                                   Perangkat ini
                                 </span>
                               )}
-                              {!isCurrentDevice && (
+                              {isMasterDevice && (
+                                <span className="bg-primary/20 text-primary text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1">
+                                  <ShieldCheck className="w-3 h-3" /> Master
+                                </span>
+                              )}
+                              {!isCurrentDevice && !log.is_approved && (
                                 <span className="bg-warning/20 text-warning text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1">
-                                  <AlertTriangle className="w-3 h-3" /> Perangkat lain
+                                  <AlertTriangle className="w-3 h-3" /> Belum disetujui
+                                </span>
+                              )}
+                              {!isCurrentDevice && log.is_approved && !isMasterDevice && (
+                                <span className="bg-muted text-muted-foreground text-[10px] px-2 py-0.5 rounded-full">
+                                  Disetujui
                                 </span>
                               )}
                             </div>
@@ -1375,6 +1574,29 @@ const Admin = () => {
                             <p className="text-xs text-muted-foreground mt-1 truncate">
                               ID: {log.device_id.substring(0, 30)}...
                             </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {!log.is_approved && !isMasterDevice && (
+                              <Button 
+                                size="sm" 
+                                variant="outline" 
+                                onClick={() => handleApproveDevice(log.device_id)}
+                                className="border-success/50 text-success hover:bg-success/10 text-xs h-8"
+                              >
+                                <ShieldCheck className="w-3 h-3 mr-1" /> Setujui
+                              </Button>
+                            )}
+                            {!isCurrentDevice && (
+                              <Button 
+                                size="icon" 
+                                variant="ghost" 
+                                onClick={() => handleDeleteSession(log.id)}
+                                className="text-destructive hover:bg-destructive/10 h-8 w-8"
+                                title="Hapus session"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1579,6 +1801,17 @@ const Admin = () => {
                   <option value="tiktok">TikTok</option>
                   <option value="discord">Discord</option>
                   <option value="link">Link Umum</option>
+                </select>
+              </div>
+              <div>
+                <Label className="text-sm">Lokasi</Label>
+                <select
+                  value={editingLink.link_location}
+                  onChange={(e) => setEditingLink({ ...editingLink, link_location: e.target.value })}
+                  className="w-full h-10 px-3 rounded-md border border-input bg-background mt-1"
+                >
+                  <option value="home">Home Page</option>
+                  <option value="success">Payment Success</option>
                 </select>
               </div>
               <div>

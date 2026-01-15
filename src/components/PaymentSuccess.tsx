@@ -1,7 +1,8 @@
-import { FC } from 'react';
+import { FC, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Copy } from 'lucide-react';
 import GlobalBackground from './GlobalBackground';
+import { supabase } from '@/integrations/supabase/client';
 
 interface PaymentSuccessProps {
   finalData: {
@@ -14,8 +15,56 @@ interface PaymentSuccessProps {
   onCopy: (text: string) => void;
 }
 
+interface SocialLink {
+  id: string;
+  name: string;
+  icon_type: string;
+  url: string;
+  label: string;
+}
+
 const PaymentSuccess: FC<PaymentSuccessProps> = ({ finalData, onCopy }) => {
-  const scriptText = `loadstring(game:HttpGet("https://pastebin.com/raw/rwH3C1Xb"))()`;
+  const [scriptText, setScriptText] = useState('loadstring(game:HttpGet("https://pastebin.com/raw/rwH3C1Xb"))()');
+  const [socialLinks, setSocialLinks] = useState<SocialLink[]>([]);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      // Fetch loadstring script from settings
+      const { data: settingsData } = await supabase
+        .from('site_settings')
+        .select('value')
+        .eq('key', 'loadstring_script')
+        .single();
+      
+      if (settingsData?.value) {
+        setScriptText(settingsData.value);
+      }
+
+      // Fetch social links for payment success page
+      const { data: linksData } = await supabase
+        .from('social_links')
+        .select('*')
+        .eq('is_active', true)
+        .eq('link_location', 'success')
+        .order('sort_order');
+      
+      if (linksData) {
+        setSocialLinks(linksData as SocialLink[]);
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  const getWhatsAppGroupLink = () => {
+    const groupLink = socialLinks.find(l => l.icon_type === 'whatsapp-group');
+    return groupLink?.url || 'https://chat.whatsapp.com/HlXpv77lO783OUKWeKPaiG';
+  };
+
+  const getAdminContactLink = () => {
+    const contactLink = socialLinks.find(l => l.icon_type === 'whatsapp-contact' || l.icon_type === 'whatsapp');
+    return contactLink?.url || 'https://wa.me/6289518030035';
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-background relative overflow-hidden">
@@ -87,7 +136,7 @@ const PaymentSuccess: FC<PaymentSuccessProps> = ({ finalData, onCopy }) => {
         {/* WhatsApp Buttons */}
         <div className="space-y-3 mb-6">
           <a
-            href="https://chat.whatsapp.com/HlXpv77lO783OUKWeKPaiG"
+            href={getWhatsAppGroupLink()}
             target="_blank"
             rel="noopener noreferrer"
             className="w-full flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#20BD5C] text-white font-display font-bold py-3 px-4 rounded-lg transition-colors"
@@ -99,7 +148,7 @@ const PaymentSuccess: FC<PaymentSuccessProps> = ({ finalData, onCopy }) => {
           </a>
           
           <a
-            href="https://wa.me/6289518030035"
+            href={getAdminContactLink()}
             target="_blank"
             rel="noopener noreferrer"
             className="w-full flex items-center justify-center gap-2 bg-muted hover:bg-muted/80 text-foreground font-display font-medium py-3 px-4 rounded-lg border border-border transition-colors"
