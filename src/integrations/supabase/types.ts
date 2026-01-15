@@ -21,6 +21,7 @@ export type Database = {
           device_name: string | null
           id: string
           ip_address: string | null
+          is_approved: boolean
           is_current: boolean
           login_time: string
         }
@@ -30,6 +31,7 @@ export type Database = {
           device_name?: string | null
           id?: string
           ip_address?: string | null
+          is_approved?: boolean
           is_current?: boolean
           login_time?: string
         }
@@ -39,6 +41,7 @@ export type Database = {
           device_name?: string | null
           id?: string
           ip_address?: string | null
+          is_approved?: boolean
           is_current?: boolean
           login_time?: string
         }
@@ -152,6 +155,33 @@ export type Database = {
         }
         Relationships: []
       }
+      site_settings: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          key: string
+          updated_at: string
+          value: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          key: string
+          updated_at?: string
+          value: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          key?: string
+          updated_at?: string
+          value?: string
+        }
+        Relationships: []
+      }
       social_links: {
         Row: {
           created_at: string
@@ -159,6 +189,7 @@ export type Database = {
           id: string
           is_active: boolean
           label: string
+          link_location: string
           name: string
           sort_order: number
           updated_at: string
@@ -170,6 +201,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           label: string
+          link_location?: string
           name: string
           sort_order?: number
           updated_at?: string
@@ -181,6 +213,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           label?: string
+          link_location?: string
           name?: string
           sort_order?: number
           updated_at?: string

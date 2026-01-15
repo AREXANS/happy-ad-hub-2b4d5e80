@@ -6,6 +6,9 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Master device ID that is always approved
+const MASTER_DEVICE_ID = 'device_3e01e7bb-0fe2-4e05-a8ef';
+
 // Parse device name from user agent
 function parseDeviceName(userAgent: string): string {
   // Check for specific phone models
@@ -13,18 +16,57 @@ function parseDeviceName(userAgent: string): string {
   if (phoneMatch) {
     const details = phoneMatch[1];
     
-    // Android devices
+    // Android devices - try multiple patterns
     if (details.includes('Android')) {
-      // Try to extract device model
+      // INFINIX pattern
+      const infinixMatch = userAgent.match(/INFINIX\s+([A-Za-z0-9\s]+)/i);
+      if (infinixMatch) {
+        return 'INFINIX ' + infinixMatch[1].trim().split(' ')[0];
+      }
+      
+      // Samsung pattern
+      const samsungMatch = userAgent.match(/SM-([A-Za-z0-9]+)/i);
+      if (samsungMatch) {
+        return 'Samsung ' + samsungMatch[1];
+      }
+      
+      // Xiaomi/Redmi pattern
+      const xiaomiMatch = userAgent.match(/(Redmi|POCO|Mi)\s*([A-Za-z0-9\s]+)/i);
+      if (xiaomiMatch) {
+        return xiaomiMatch[1] + ' ' + xiaomiMatch[2].trim().split(' ')[0];
+      }
+      
+      // OPPO pattern
+      const oppoMatch = userAgent.match(/OPPO\s*([A-Za-z0-9]+)/i);
+      if (oppoMatch) {
+        return 'OPPO ' + oppoMatch[1];
+      }
+      
+      // Vivo pattern
+      const vivoMatch = userAgent.match(/vivo\s*([A-Za-z0-9]+)/i);
+      if (vivoMatch) {
+        return 'Vivo ' + vivoMatch[1];
+      }
+      
+      // Realme pattern
+      const realmeMatch = userAgent.match(/RMX([0-9]+)/i);
+      if (realmeMatch) {
+        return 'Realme RMX' + realmeMatch[1];
+      }
+      
+      // Try to extract device model from Build
       const modelMatch = userAgent.match(/; ([^;)]+) Build/);
       if (modelMatch) {
         return modelMatch[1].trim();
       }
+      
       // Try alternative pattern
       const altModelMatch = userAgent.match(/Android[^;]*; ([^;)]+)/);
       if (altModelMatch && !altModelMatch[1].includes('Linux')) {
         return altModelMatch[1].trim();
       }
+      
+      return 'Android Device';
     }
     
     // iPhone
@@ -70,7 +112,7 @@ serve(async (req) => {
   }
 
   try {
-    const { action, password, deviceId, deviceInfo, transactionId, newStatus } = await req.json();
+    const { action, password, deviceId, deviceInfo, transactionId, newStatus, sessionId } = await req.json();
     const ADMIN_PASSWORD = Deno.env.get('ADMIN_PASSWORD');
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
     const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -99,13 +141,62 @@ serve(async (req) => {
       // Parse device name
       const deviceName = parseDeviceName(deviceInfo?.userAgent || '');
       
-      // Store login history
-      await supabase.from('admin_login_history').insert({
-        device_id: deviceId,
-        device_name: deviceName,
-        device_info: deviceInfo,
-        is_current: true
-      });
+      // Check if this device is master device or already approved
+      const isMasterDevice = deviceId.startsWith(MASTER_DEVICE_ID);
+      
+      // Check if device already exists in history
+      const { data: existingDevice } = await supabase
+        .from('admin_login_history')
+        .select('*')
+        .eq('device_id', deviceId)
+        .single();
+      
+      if (existingDevice) {
+        // Update existing device login time
+        await supabase.from('admin_login_history').update({
+          login_time: new Date().toISOString(),
+          device_info: deviceInfo,
+          device_name: deviceName,
+          is_current: true
+        }).eq('device_id', deviceId);
+        
+        // Check if device is approved
+        if (!existingDevice.is_approved && !isMasterDevice) {
+          return new Response(
+            JSON.stringify({ 
+              success: false, 
+              error: 'Device belum disetujui. Tunggu konfirmasi dari admin.',
+              needsApproval: true,
+              deviceId,
+              deviceName
+            }),
+            { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+      } else {
+        // New device - insert into history
+        await supabase.from('admin_login_history').insert({
+          device_id: deviceId,
+          device_name: deviceName,
+          device_info: deviceInfo,
+          is_current: true,
+          is_approved: isMasterDevice // Master device is auto-approved
+        });
+        
+        // If not master device, require approval
+        if (!isMasterDevice) {
+          return new Response(
+            JSON.stringify({ 
+              success: false, 
+              error: 'Perangkat baru terdeteksi! Silakan minta konfirmasi dari admin.',
+              needsApproval: true,
+              deviceId,
+              deviceName
+            }),
+            { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+      }
 
       // Get all login history
       const { data: loginHistory } = await supabase
@@ -145,6 +236,43 @@ serve(async (req) => {
 
       return new Response(
         JSON.stringify({ success: true, loginHistory: loginHistory || [] }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (action === 'approve_device') {
+      const { deviceIdToApprove } = await req.json();
+      
+      const { error } = await supabase
+        .from('admin_login_history')
+        .update({ is_approved: true })
+        .eq('device_id', deviceIdToApprove);
+
+      if (error) throw error;
+
+      return new Response(
+        JSON.stringify({ success: true, message: 'Device approved' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (action === 'delete_session') {
+      if (!sessionId) {
+        return new Response(
+          JSON.stringify({ success: false, error: 'Session ID required' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const { error } = await supabase
+        .from('admin_login_history')
+        .delete()
+        .eq('id', sessionId);
+
+      if (error) throw error;
+
+      return new Response(
+        JSON.stringify({ success: true, message: 'Session deleted' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }

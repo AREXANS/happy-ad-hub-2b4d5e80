@@ -2,7 +2,7 @@ import { FC, useEffect, useState } from 'react';
 import AdSlider from './AdSlider';
 import GlobalBackground from './GlobalBackground';
 import { supabase } from '@/integrations/supabase/client';
-import { MessageCircle, Users, Link as LinkIcon } from 'lucide-react';
+import { Link as LinkIcon } from 'lucide-react';
 
 interface Ad {
   id: string;
@@ -31,6 +31,7 @@ interface SocialLink {
   label: string;
   is_active: boolean;
   sort_order: number;
+  link_location: string;
 }
 
 interface PackageSelectionProps {
@@ -90,6 +91,7 @@ const PackageSelection: FC<PackageSelectionProps> = ({ onSelect, formatRupiah, p
         .from('social_links')
         .select('*')
         .eq('is_active', true)
+        .eq('link_location', 'home')
         .order('sort_order');
       
       if (data) {
