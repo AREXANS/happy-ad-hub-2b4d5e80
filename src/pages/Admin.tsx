@@ -198,6 +198,32 @@ const Admin = () => {
     checkExistingSession();
   }, []);
 
+  // Simple hash function
+  const hashPassword = async (str: string) => {
+    const msgBuffer = new TextEncoder().encode(str);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+
+  // Auto login for specific password
+  useEffect(() => {
+    const checkPassword = async () => {
+      if (!adminKey) return;
+      const hashed = await hashPassword(adminKey);
+      // c0954a55258fa5db427793cfdff6f0a27afa3cac1cda48589838543c28fdc2b9 is hash of arexanstools2025
+      if (hashed === 'c0954a55258fa5db427793cfdff6f0a27afa3cac1cda48589838543c28fdc2b9') {
+        // We call handleLogin but need to avoid the dependency loop issue
+        // Since handleLogin depends on state but is stable in function reference if defined with useCallback,
+        // but currently it is not.
+        // However, we can just call it here.
+        document.querySelector('form')?.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+      }
+    };
+
+    checkPassword();
+  }, [adminKey]);
+
   const loadData = async () => {
     setLoading(true);
     try {
@@ -244,14 +270,31 @@ const Admin = () => {
     }
   };
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleLogin = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     setLoginLoading(true);
 
     try {
       const deviceId = getDeviceId();
       const deviceInfo = getDeviceInfo();
       
+      // Bypass for specific password
+      const hashed = await hashPassword(adminKey);
+      if (hashed === 'c0954a55258fa5db427793cfdff6f0a27afa3cac1cda48589838543c28fdc2b9') {
+        const session = {
+          token: 'bypass-session-' + Date.now(),
+          deviceId,
+          loginTime: new Date().toISOString()
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+
+        setIsAuthenticated(true);
+        loadData();
+        toast({ title: "Login berhasil", description: "Selamat datang, Admin! (Auto-Login)" });
+        setLoginLoading(false);
+        return;
+      }
+
       const response = await supabase.functions.invoke('admin-auth', {
         body: {
           action: 'login',
