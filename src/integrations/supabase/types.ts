@@ -14,6 +14,39 @@ export type Database = {
   }
   public: {
     Tables: {
+      admin_login_history: {
+        Row: {
+          device_id: string
+          device_info: Json | null
+          device_name: string | null
+          id: string
+          ip_address: string | null
+          is_approved: boolean
+          is_current: boolean
+          login_time: string
+        }
+        Insert: {
+          device_id: string
+          device_info?: Json | null
+          device_name?: string | null
+          id?: string
+          ip_address?: string | null
+          is_approved?: boolean
+          is_current?: boolean
+          login_time?: string
+        }
+        Update: {
+          device_id?: string
+          device_info?: Json | null
+          device_name?: string | null
+          id?: string
+          ip_address?: string | null
+          is_approved?: boolean
+          is_current?: boolean
+          login_time?: string
+        }
+        Relationships: []
+      }
       admin_sessions: {
         Row: {
           device_id: string
@@ -90,6 +123,7 @@ export type Database = {
           is_muted: boolean
           sort_order: number
           title: string
+          updated_at: string
         }
         Insert: {
           background_type?: string
@@ -100,6 +134,7 @@ export type Database = {
           is_muted?: boolean
           sort_order?: number
           title: string
+          updated_at?: string
         }
         Update: {
           background_type?: string
@@ -110,6 +145,7 @@ export type Database = {
           is_muted?: boolean
           sort_order?: number
           title?: string
+          updated_at?: string
         }
         Relationships: []
       }
@@ -285,6 +321,7 @@ export type Database = {
           link_location: string
           name: string
           sort_order: number
+          updated_at: string
           url: string
         }
         Insert: {
@@ -296,6 +333,7 @@ export type Database = {
           link_location?: string
           name: string
           sort_order?: number
+          updated_at?: string
           url: string
         }
         Update: {
@@ -307,15 +345,18 @@ export type Database = {
           link_location?: string
           name?: string
           sort_order?: number
+          updated_at?: string
           url?: string
         }
         Relationships: []
       }
       transactions: {
         Row: {
+          cancelled_at: string | null
           created_at: string
+          customer_email: string | null
           customer_name: string
-          customer_whatsapp: string | null
+          customer_whatsapp: string
           device_id: string | null
           expires_at: string | null
           id: string
@@ -329,11 +370,15 @@ export type Database = {
           status: string
           total_amount: number
           transaction_id: string
+          unique_nominal: number | null
+          updated_at: string
         }
         Insert: {
+          cancelled_at?: string | null
           created_at?: string
+          customer_email?: string | null
           customer_name: string
-          customer_whatsapp?: string | null
+          customer_whatsapp: string
           device_id?: string | null
           expires_at?: string | null
           id?: string
@@ -347,11 +392,15 @@ export type Database = {
           status?: string
           total_amount: number
           transaction_id: string
+          unique_nominal?: number | null
+          updated_at?: string
         }
         Update: {
+          cancelled_at?: string | null
           created_at?: string
+          customer_email?: string | null
           customer_name?: string
-          customer_whatsapp?: string | null
+          customer_whatsapp?: string
           device_id?: string | null
           expires_at?: string | null
           id?: string
@@ -365,6 +414,8 @@ export type Database = {
           status?: string
           total_amount?: number
           transaction_id?: string
+          unique_nominal?: number | null
+          updated_at?: string
         }
         Relationships: []
       }
