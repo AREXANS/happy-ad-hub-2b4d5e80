@@ -1,0 +1,5 @@
+# Proxy API requests to Supabase Edge Functions
+/api/*  https://octceotolcghpyqctgwj.supabase.co/functions/v1/:splat  200
+
+# SPA fallback - must be last
+/*    /index.html   200
